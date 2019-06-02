@@ -1,5 +1,10 @@
 module TraceGraph
 
-greet() = print("Hello World!")
+using Cassette
+using LightGraphs
+
+include("GenerateGraph.jl")
+
+export TGraph, TNode, generategraph
 
 end # module
