@@ -3,11 +3,11 @@ using TraceGraph
 using TraceGraph:generategraph
 using GraphPlot
 using Flux
+using LightGraphs
 
 @testset "Basic Tests" begin
     tg = generategraph(+, 1, 2)
-    gplothtml(tg.graph, nodelabel = tg.labels)
-
+    @test nv(tg.graph) == 3
     function foo(x)
         x = x+1
     end
@@ -17,8 +17,6 @@ using Flux
     end
 
     tg = generategraph(bar, 10)
-    gplothtml(tg.graph, nodelabel = tg.labels)
-
-    tg = generategraph(Conv((2, 2), 1=>1), rand(2, 2, 1, 1))
+    @test nv(tg.graph) == 9
     gplothtml(tg.graph, nodelabel = tg.labels)
 end
