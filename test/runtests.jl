@@ -18,5 +18,5 @@ using LightGraphs
 
     tg = generategraph(bar, 10)
     @test nv(tg.graph) == 9
-    gplothtml(tg.graph, nodelabel = tg.labels)
+    tg = generategraph(Dense(2,2), rand(2))
 end
