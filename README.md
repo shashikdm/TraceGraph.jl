@@ -1,5 +1,5 @@
 # TraceGraph.jl
-[![Build Status](https://travis-ci.org/shashikdm/TraceGraph.jl.svg?branch=master)](https://travis-ci.org/shashikdm/TraceGraph.jl) [![codecov](https://codecov.io/gh/shashikdm/TraceGraph.jl/branch/master/graph/badge.svg)](https://codecov.io/gh/shashikdm/TraceGraph.jl)
+[![Build Status](https://travis-ci.com/shashikdm/TraceGraph.jl.svg?branch=master)](https://travis-ci.com/shashikdm/TraceGraph.jl) [![codecov](https://codecov.io/gh/shashikdm/TraceGraph.jl/branch/master/graph/badge.svg)](https://codecov.io/gh/shashikdm/TraceGraph.jl)
 
 Generate directed graphs of the IR of a function call.
 

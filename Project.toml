@@ -8,9 +8,9 @@ Cassette = "7057c7e9-c182-5462-911a-8362d720325c"
 LightGraphs = "093fc24a-ae57-5d10-9952-331d41423f4d"
 
 [extras]
+Flux = "587475ba-b771-5e3f-ad9e-33799f191a9c"
 GraphPlot = "a2cc645c-3eea-5389-862e-a155d0052231"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
-Flux = "587475ba-b771-5e3f-ad9e-33799f191a9c"
 
 [targets]
 test = ["Test", "GraphPlot", "Flux"]
