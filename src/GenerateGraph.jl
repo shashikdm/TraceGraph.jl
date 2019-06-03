@@ -95,7 +95,7 @@ end
 
 """
     generategraph(f::Function, args...)
-Creates an object of type TraceGraph
+Creates an object of type TGraph
 """
 
 Cassette.@context TraceCtx
@@ -103,14 +103,10 @@ Cassette.prehook(ctx::TraceCtx, args...) = enter!(ctx.metadata, args...)
 Cassette.posthook(ctx::TraceCtx, args...) = exit!(ctx.metadata)
 
 function generategraph(f, args...)
-
     G = DiGraph()
     trace = Trace()
-
     Cassette.overdub(TraceCtx(metadata = trace), f, args...)
-
     nodelist = Vector{TNode}()
-
     uniquenames = Dict{String, Int64}()
     prefix = ""
     function buildgraph(trace::Array{Any, 1}, lnodelist::Vector{TNode})
@@ -119,47 +115,44 @@ function generategraph(f, args...)
             call = line[1]
             args = line[2:end]
             result = call(args...)
-
             if isempty(t.second) || call in ignorelist #no subgraph
                 insertnode!(nodelist, lnodelist, uniquenames, prefix, custom_repr(call), custom_repr(call), result)
                 add_vertex!(G)
-                resultref = size(nodelist, 1)
+                resultref = nv(G)
                 for arg in args
                     noderef = getnoderef(nodelist, lnodelist, arg)
                     if noderef == nothing #new node
                         insertnode!(nodelist, lnodelist, uniquenames, prefix, custom_repr(arg), custom_repr(arg), arg)
                         add_vertex!(G)
-                        noderef = size(nodelist, 1)
+                        noderef = nv(G)
                     end
                     add_edge!(G, noderef, resultref) #connect result and arg
                 end
             else #subgraph
+
+                #Step 1 create arg nodes and a result node
+
                 newlocalnodelist = Vector{TNode}()
                 for arg in args
                     #for each arg make node in both caller and callee
-                    #first make arg node in this function
                     noderef1 = getnoderef(nodelist, lnodelist, arg)
                     if noderef1 == nothing #new node
                         insertnode!(nodelist, lnodelist, uniquenames, prefix, custom_repr(arg), custom_repr(arg), arg)
                         add_vertex!(G)
-                        noderef1 = size(nodelist, 1)
+                        noderef1 = nv(G)
                     end
                     #now make arg node in that function
                     insertnode!(nodelist, newlocalnodelist, uniquenames, prefix*custom_repr(call)*"/", custom_repr(arg), custom_repr(arg), arg)
                     add_vertex!(G)
-                    noderef2 = size(nodelist, 1)
+                    noderef2 = nv(G)
                     add_edge!(G, noderef1, noderef2) #connect result and arg
                 end
                 #Then build subgraph
                 oldprefix = prefix
                 prefix = prefix*custom_repr(call)*"/"
                 buildgraph(t.second, newlocalnodelist)
-                #Then connect the result
-                noderef1 = getnoderef(nodelist, newlocalnodelist, result)
-                insertnode!(nodelist, Vector{TNode}(), uniquenames, oldprefix, "ret", "return", result)
-                add_vertex!(G)
-                noderef2 = size(nodelist, 1)
-                add_edge!(G, noderef1, noderef2)
+                #Then add the last node in subgraph to local nodelist
+                push!(lnodelist, last(newlocalnodelist))
             end
         end
     end

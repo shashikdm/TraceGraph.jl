@@ -5,6 +5,6 @@ using LightGraphs
 
 include("GenerateGraph.jl")
 
-export TGraph, TNode, generategraph
+export TGraph, TNode, generategraph, ignorelist
 
 end # module
