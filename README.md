@@ -37,5 +37,5 @@ gplot(tracegraph.graph, nodelabels = tracegraph.labels)
 #OR
 gplothtml(tracegraph.graph, nodelabels = tracegraph.labels)
 ```
-The resulting plot will look something like :
+The resulting plot will look something like :  
 ![foobargraph](https://raw.githubusercontent.com/shashikdm/TraceGraph.jl/de19aa12d31b70a684ba271d0c76b1e6be641bcb/foobargraph.png)
