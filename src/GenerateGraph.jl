@@ -18,6 +18,7 @@ function insertnode!(valrefs::Dict{UInt64, Int64}, nodelist::Vector{TNode}, uniq
     sz = ()
     if isa(val, AbstractArray)
         sz = size(val)
+    end
     push!(nodelist, TNode(completename, op, dtype, sz))
     valrefs[objectid(val)] = length(nodelist)
 end
