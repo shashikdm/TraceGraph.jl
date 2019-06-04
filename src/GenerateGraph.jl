@@ -15,12 +15,10 @@ function insertnode!(valrefs::Dict{UInt64, Int64}, nodelist::Vector{TNode}, uniq
         uniquenames[completename] = 0
     end
     dtype = typeof(val)
+    sz = ()
     if isa(val, AbstractArray)
-        size = size(val)
-    else
-        size = ()
-    end
-    push!(nodelist, TNode(completename, op, dtype, size))
+        sz = size(val)
+    push!(nodelist, TNode(completename, op, dtype, sz))
     valrefs[objectid(val)] = length(nodelist)
 end
 
@@ -66,7 +64,6 @@ function Cassette.prehook(ctx::TraceCtx, f, args...)
             add_edge!(ctx.metadata.G, nodeid, resultid)
         end
     else
-        @info "I came here"
         ctx.metadata.prefix = ctx.metadata.prefix*custom_repr(f)*"/"
         last = findlast(isequal('/'), ctx.metadata.prefix)
     end
@@ -74,7 +71,6 @@ end
 function Cassette.posthook(ctx::TraceCtx, f, args...)
     if f in ctx.metadata.ignorelist || !Cassette.canrecurse(ctx, f, args...)
     else
-        @info "Therefore I came there too"
         last = findlast(isequal('/'), ctx.metadata.prefix)
         if last != nothing
             ctx.metadata.prefix = ctx.metadata.prefix[1:last-1]
