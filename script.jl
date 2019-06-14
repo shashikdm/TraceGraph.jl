@@ -184,3 +184,11 @@ function foo(a)
 end
 gd = buildgraph(foo, 100)
 gplothtml(gd.g, nodelabel = gd.nodenames)
+
+"""
+Todo
+1. add uniquenames
+2. populate ignorelist
+3. modularize
+4. add nodevalues
+"""
