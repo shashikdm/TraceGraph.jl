@@ -13,6 +13,7 @@ mutable struct GraphData
     nodenames::Vector{String}
     depth::Int64
     argrefs::Vector{Queue{Vector{Int64}}}
+    prefix::Vector{String}
 end
 
 ignorelist = []
@@ -24,12 +25,13 @@ function Cassette.prehook(ctx::TraceCtx, f, args...)
     orgargs = dequeue!(gdata.argrefs[gdata.depth])
     if Cassette.canrecurse(ctx, f, args...) == false
         #can't recurse then create nodes for result and args
-        push!(gdata.nodenames, repr(f))
+        push!(gdata.prefix, repr(f))
+        push!(gdata.nodenames, join(gdata.prefix, "/")*"/"*repr(f))
         add_vertex!(gdata.g)
         resultref = nv(gdata.g)
         for (n, arg) in enumerate(args)
             #create node for each argument
-            push!(gdata.nodenames, repr(arg))
+            push!(gdata.nodenames, join(gdata.prefix, "/")*"/"*repr(arg))
             add_vertex!(gdata.g)
             #also connect
             add_edge!(gdata.g, orgargs[n], nv(gdata.g))
@@ -41,12 +43,13 @@ function Cassette.prehook(ctx::TraceCtx, f, args...)
     end
     method = methods(f, Tuple([typeof(arg) for arg in args])).ms[1]
     name = method.name
+    push!(gdata.prefix, string(name))
     localnodes = Dict{Any, Int64}()
     argnames = Base.method_argnames(method)[2:end]
     @assert length(argnames)+1 == length(orgargs)
     for (n, arg) in enumerate(argnames)
         #create a node for each argument
-        push!(gdata.nodenames, string(arg))
+        push!(gdata.nodenames, join(gdata.prefix, "/")*"/"*string(arg))
         add_vertex!(gdata.g)
         localnodes[Core.SlotNumber(findfirst(isequal(arg), ir.slotnames))] = nv(gdata.g)
         #also connect these arguments to the parent function
@@ -54,7 +57,7 @@ function Cassette.prehook(ctx::TraceCtx, f, args...)
     end
     if name in ignorelist
         #if this is to be ignored, then just make one node for result
-        push!(gdata.nodenames, string(name))
+        push!(gdata.nodenames, join(gdata.prefix, "/")*"/"*string(name))
         add_vertex!(gdata.g)
         resultref = nv(gdata.g)
         for v in values(localnodes)
@@ -70,7 +73,7 @@ function Cassette.prehook(ctx::TraceCtx, f, args...)
                 #assignment
                 #create node for lhs
                 lhs = line.args[1]
-                push!(gdata.nodenames, slotname(ir, lhs))
+                push!(gdata.nodenames, join(gdata.prefix, "/")*"/"*slotname(ir, lhs))
                 add_vertex!(gdata.g)
                 lhsref = nv(gdata.g)
                 localnodes[lhs] = lhsref
@@ -85,7 +88,7 @@ function Cassette.prehook(ctx::TraceCtx, f, args...)
                                 argref = localnodes[arg]
                                 push!(arglist, argref)
                             elseif isa(arg, Number)
-                                push!(gdata.nodenames, string(arg))
+                                push!(gdata.nodenames, join(gdata.prefix, "/")*"/"*string(arg))
                                 add_vertex!(gdata.g)
                                 push!(arglist, nv(gdata.g))
                             else
@@ -101,7 +104,7 @@ function Cassette.prehook(ctx::TraceCtx, f, args...)
                     add_edge!(gdata.g, rhsref, lhsref)
                 elseif isa(rhs, Number)
                     #this is a constant
-                    push!(gdata.nodenames, rhs)
+                    push!(gdata.nodenames, join(gdata.prefix, "/")*"/"*repr(rhs))
                     add_vertex!(gdata.g)
                     rhsref = nv(gdata.g)
                     add_edge!(gdata.g, rhsref, lhsref)
@@ -110,7 +113,7 @@ function Cassette.prehook(ctx::TraceCtx, f, args...)
                 end
             elseif line.head == :call
                 lhs = Core.SSAValue(n)
-                push!(gdata.nodenames, string(lhs))
+                push!(gdata.nodenames, join(gdata.prefix, "/")*"/"*string(lhs))
                 add_vertex!(gdata.g)
                 lhsref = nv(gdata.g)
                 localnodes[lhs] = lhsref
@@ -122,7 +125,7 @@ function Cassette.prehook(ctx::TraceCtx, f, args...)
                         argref = localnodes[arg]
                         push!(arglist, argref)
                     elseif isa(arg, Number)
-                        push!(gdata.nodenames, string(arg))
+                        push!(gdata.nodenames, join(gdata.prefix, "/")*"/"*string(arg))
                         add_vertex!(gdata.g)
                         push!(arglist, add_vertex!(gdata.g))
                     else
@@ -150,10 +153,11 @@ function Cassette.posthook(ctx::TraceCtx, output, f, args...)
         pop!(gdata.argrefs)
         gdata.depth = gdata.depth-1
     end
+    pop!(gdata.prefix)
     @show "posthook" typeof(f) gdata.depth gdata.argrefs[gdata.depth]
 end
 function buildgraph(f, args...)
-    gdata = GraphData(DiGraph(), Vector{String}(), 1, [])
+    gdata = GraphData(DiGraph(), Vector{String}(), 1, [], Vector{String}())
     q = Queue{Vector{Int64}}()
     noderefs = Vector{Int64}()
     for arg in args
