@@ -41,13 +41,13 @@ end
 
 mutable struct TraceData
     ignorelist::Vector{Any}
-    valrefs::Dict{UInt64, Int64}
+    varnames::Dict{Symbol, Int64}
     nodelist::Vector{TNode}
     uniquenames::Dict{String, Int64}
     prefix::AbstractString
     G::SimpleDiGraph
 end
-ignorelist = [+, -, *, /]
+
 Cassette.@context TraceCtx
 function Cassette.prehook(ctx::TraceCtx, f, args...)
     result = f(args...)
@@ -70,7 +70,7 @@ function Cassette.prehook(ctx::TraceCtx, f, args...)
     end
 end
 function Cassette.posthook(ctx::TraceCtx, f, args...)
-    if f in ctx.metadata.ignorelist || !Cassette.canrecurse(ctx, f, args...)
+    if (!ismissing(f) && f in ctx.metadata.ignorelist) || !Cassette.canrecurse(ctx, f, args...)
     else
         last = findlast(isequal('/'), ctx.metadata.prefix)
         if last != nothing
@@ -78,16 +78,32 @@ function Cassette.posthook(ctx::TraceCtx, f, args...)
         end
     end
 end
+
+function Cassette.overdub(ctx::TraceCtx, f, args...)
+
+end
+function getvarnames(::Type{<TraceCtx}, reflection::Cassette.Reflection)
+
+end
+const tracepass = Cassette.@pass getvals
+
 """
     generategraph(f::Function, args...)
 Creates an object of type TGraph
 """
 function generategraph(f, args...)
     tracedata = TraceData(ignorelist, Dict{UInt64, Int64}(), Vector{TNode}(), Dict{String, Int64}(), "", DiGraph())
-    for func in ignorelist
+    for func in tracelist
         @eval Cassette.overdub(ctx::TraceCtx, ::typeof($func), args...) = $func(args...)
     end
-    tracectx = TraceCtx(metadata = tracedata)
+    tracectx = TraceCtx(metadata = tracedata, pass = tracepass)
     Cassette.overdub(tracectx, f, args...)
     TGraph(tracedata.G, tracedata.nodelist, getnodelabels(tracedata.nodelist))
 end
+"""
+Todo:
+use cassette to recurse only in desired function
+use reflection to generate graph
+
+
+"""
