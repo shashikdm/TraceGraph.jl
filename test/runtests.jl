@@ -11,5 +11,4 @@ using LightGraphs
             return (a,b,c)
     end
     gd = tracegraph(foo, 100)
-    #gplothtml(gd.g, nodelabel = gd.nodelabel)
 end
