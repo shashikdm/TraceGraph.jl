@@ -1,6 +1,6 @@
 Cassette.@context TraceCtx
 
-mutable struct GraphData
+struct GraphData
     tg::TGraph
     argrefs::Stack{Queue{Vector{Int64}}}
     prefix::Vector{String}
@@ -18,13 +18,11 @@ function gen_label(gdata::GraphData, name::String)
     end
     gen_prefix(gdata)*uniquename
 end
-
 function add_vertex!(gdata::GraphData, name::String)
     push!(gdata.tg.nodelabel, name)
     add_vertex!(gdata.tg.g)
     nv(gdata.tg.g)
 end
-
 function add_prefix!(gdata::GraphData, newprefix::String)
     candidatename = newprefix
     if haskey(gdata.uniquenames, candidatename)
@@ -36,6 +34,7 @@ function add_prefix!(gdata::GraphData, newprefix::String)
     end
     push!(gdata.prefix, uniquename)
 end
+
 rm_prefix!(gdata::GraphData) = pop!(gdata.prefix)
 
 gen_prefix(gdata::GraphData) = join(gdata.prefix, "/")*"/"
