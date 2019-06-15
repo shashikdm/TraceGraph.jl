@@ -19,7 +19,7 @@ struct TGraph
     g::SimpleDiGraph
     nodelabel::Vector{String}
     nodeop::Vector{String}
-    nodeval::Vector{Any}
+    nodevalue::Vector{Any}
 end
 
 include("NoRecurseList.jl")

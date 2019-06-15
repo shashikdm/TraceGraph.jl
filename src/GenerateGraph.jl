@@ -1,9 +1,20 @@
 Cassette.@context TraceCtx
 
-mutable struct GraphData
-    tg::TGraph
+######Approach:#######
+#make nodes by tracing IR of each function call
+#expose arguments and return nodes for function such that,
+# when they are called, they can be easily connected (argrefs)
+# for each arg, constant, function and return save value in dictionary and later fill tg.nodevals
+
+mutable struct GraphData #will go into ctx metadata
+    tg::TGraph #will return this object
+    #stack of queue of arglists
+    #because nodes at each depth of recursion are created in a stack manner
+    # and nodes within a function call are created in a queue manner
     argrefs::Stack{Queue{Vector{Int64}}}
+    #important for hierarchy and subgraph
     prefix::Vector{String}
+    #important for tb to differenriate nodes
     uniquenames::Dict{String, Int64}
     valdict::Dict{Int64, Any}
 end
@@ -19,6 +30,7 @@ function gen_label(gdata::GraphData, name::String)
     end
     gen_prefix(gdata)*uniquename
 end
+
 function add_vertex!(gdata::GraphData, name::String, op::String)
     name = gen_label(gdata, name)
     push!(gdata.tg.nodelabel, name)
@@ -26,6 +38,7 @@ function add_vertex!(gdata::GraphData, name::String, op::String)
     add_vertex!(gdata.tg.g)
     nv(gdata.tg.g)
 end
+
 function add_prefix!(gdata::GraphData, newprefix::String)
     candidatename = newprefix
     if haskey(gdata.uniquenames, candidatename)
@@ -37,8 +50,18 @@ function add_prefix!(gdata::GraphData, newprefix::String)
     end
     push!(gdata.prefix, uniquename)
 end
+
 rm_prefix!(gdata::GraphData) = pop!(gdata.prefix)
-gen_prefix(gdata::GraphData) = join(gdata.prefix, "/")*"/"
+
+function gen_prefix(gdata::GraphData)
+    if isempty(gdata.prefix)
+        prefix = ""
+    else
+        prefix = join(gdata.prefix, "/")*"/"
+    end
+    prefix
+end
+
 add_val!(gdata::GraphData, node::Int64, val::Any) = gdata.valdict[node] = val
 
 slotname(ir::Core.CodeInfo, slotnum::Integer) = string(ir.slotnames[slotnum])
@@ -48,7 +71,7 @@ function Cassette.prehook(ctx::TraceCtx, f, args...)
     #get the IR of this function call
     ir = InteractiveUtils.@code_lowered f(args...)
     gdata = ctx.metadata
-    #obtain the exposed argument nodes for this function all
+    #obtain the exposed argument nodes for this function all (exposed in previous recursion depth)
     orgargs = front(top(gdata.argrefs))
     @assert length(orgargs) == length(args)+1 "args length mismatch"
     if Cassette.canrecurse(ctx, f, args...) == false
@@ -193,7 +216,6 @@ function Cassette.posthook(ctx::TraceCtx, output, f, args...)
         end
     end
     orgargs = dequeue!(top(gdata.argrefs))
-    @show f gdata.argrefs args
     @assert length(orgargs) == length(args) + 1
     add_val!(gdata, last(orgargs), output)
     pop!(gdata.prefix)
@@ -226,9 +248,9 @@ function tracegraph(f, args...)
     Cassette.posthook(ctx, out, f, args...)
     for v in vertices(gdata.tg.g)
         if haskey(gdata.valdict, v)
-            push!(gdata.tg.nodeval, gdata.valdict[v])
+            push!(gdata.tg.nodevalue, gdata.valdict[v])
         else
-            push!(gdata.tg.nodeval, nothing)
+            push!(gdata.tg.nodevalue, nothing)
         end
     end
     gdata.tg
