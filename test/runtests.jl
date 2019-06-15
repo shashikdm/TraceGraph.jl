@@ -11,4 +11,7 @@ using LightGraphs
             return (a,b,c)
     end
     gd = tracegraph(foo, 100)
+    add_norecurse(reshape)
+    show_norecurse()
+    rm_norecurse(reshape)
 end
