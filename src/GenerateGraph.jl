@@ -1,10 +1,11 @@
 Cassette.@context TraceCtx
 
-struct GraphData
+mutable struct GraphData
     tg::TGraph
     argrefs::Stack{Queue{Vector{Int64}}}
     prefix::Vector{String}
     uniquenames::Dict{String, Int64}
+    valdict::Dict{Int64, Any}
 end
 
 function gen_label(gdata::GraphData, name::String)
@@ -18,8 +19,10 @@ function gen_label(gdata::GraphData, name::String)
     end
     gen_prefix(gdata)*uniquename
 end
-function add_vertex!(gdata::GraphData, name::String)
+function add_vertex!(gdata::GraphData, name::String, op::String)
+    name = gen_label(gdata, name)
     push!(gdata.tg.nodelabel, name)
+    push!(gdata.tg.nodeop, op)
     add_vertex!(gdata.tg.g)
     nv(gdata.tg.g)
 end
@@ -34,10 +37,9 @@ function add_prefix!(gdata::GraphData, newprefix::String)
     end
     push!(gdata.prefix, uniquename)
 end
-
 rm_prefix!(gdata::GraphData) = pop!(gdata.prefix)
-
 gen_prefix(gdata::GraphData) = join(gdata.prefix, "/")*"/"
+add_val!(gdata::GraphData, node::Int64, val::Any) = gdata.valdict[node] = val
 
 slotname(ir::Core.CodeInfo, slotnum::Integer) = string(ir.slotnames[slotnum])
 slotname(ir::Core.CodeInfo, slotnum) = slotname(ir, slotnum.id)
@@ -47,22 +49,25 @@ function Cassette.prehook(ctx::TraceCtx, f, args...)
     ir = InteractiveUtils.@code_lowered f(args...)
     gdata = ctx.metadata
     #obtain the exposed argument nodes for this function all
-    orgargs = dequeue!(top(gdata.argrefs))
+    orgargs = front(top(gdata.argrefs))
     @assert length(orgargs) == length(args)+1 "args length mismatch"
     if Cassette.canrecurse(ctx, f, args...) == false
         #can't recurse then create nodes just for result and args
         add_prefix!(gdata, repr(f))
-        resultref = add_vertex!(gdata, gen_label(gdata, repr(f)))
+        resultref = add_vertex!(gdata, repr(f), "function")
         for (n, arg) in enumerate(args)
             #create node for each argument
-            argref = add_vertex!(gdata, gen_label(gdata, repr(arg)))
+            argref = add_vertex!(gdata, repr(arg), "arg")
             #connect the exposed arg to this arg
             add_edge!(gdata.tg.g, orgargs[n], argref)
             #connect this arg to result
             add_edge!(gdata.tg.g, argref, resultref)
+            add_val!(gdata, orgargs[n], arg)
+            add_val!(gdata, argref, arg)
         end
         #connect exposed output with this result
         add_edge!(gdata.tg.g, resultref, last(orgargs))
+        add_val!(gdata, resultref, f)
     else
         method = first(methods(f, map(typeof, args)))
         argnames = Base.method_argnames(method)[2:end]
@@ -73,18 +78,22 @@ function Cassette.prehook(ctx::TraceCtx, f, args...)
         localnodes = Dict{Any, Int64}()
         for (n, arg) in enumerate(argnames)
             #create a node for each argument
-            argref =  add_vertex!(gdata, gen_label(gdata, string(arg)))
+            argref =  add_vertex!(gdata, string(arg), "arg")
             localnodes[Core.SlotNumber(findfirst(isequal(arg), ir.slotnames))] = argref
             #also connect these arguments to the parent function
             add_edge!(gdata.tg.g, orgargs[n], argref)
+            add_val!(gdata, orgargs[n], args[n])
+            add_val!(gdata, argref, args[n])
         end
+
         if name in norecurselist
             #if this is to be ignored, then just make one node for result
-            resultref = add_vertex!(gdata, gen_label(gdata, string(name)))
+            resultref = add_vertex!(gdata, string(name), "function")
             for v in values(localnodes)
                 add_edge!(gdata.tg.g, v, resultref)
             end
             add_edge!(gdata.tg.g, resultref, last(orgargs))
+            add_val!(gdata, resultref, f)
         else
             #build subgraph
             q = Queue{Vector{Int64}}()
@@ -93,7 +102,7 @@ function Cassette.prehook(ctx::TraceCtx, f, args...)
                 if line.head == :(=) #assignment
                     #create node for lhs
                     lhs = first(line.args)
-                    lhsref = add_vertex!(gdata, gen_label(gdata, slotname(ir, lhs)))
+                    lhsref = add_vertex!(gdata, slotname(ir, lhs), "variable")
                     localnodes[lhs] = lhsref
                     rhs = last(line.args)
                     if rhs isa Expr
@@ -108,7 +117,8 @@ function Cassette.prehook(ctx::TraceCtx, f, args...)
                                     push!(arglist, argref)
                                 elseif arg isa Number
                                     #create new node for this
-                                    argref = add_vertex!(gdata, gen_label(gdata, repr(arg)))
+                                    argref = add_vertex!(gdata, repr(arg), "constant")
+                                    add_val!(gdata, argref, arg)
                                     push!(arglist, argref)
                                 else
                                     @error "unhandled rhs arg $arg"
@@ -124,7 +134,8 @@ function Cassette.prehook(ctx::TraceCtx, f, args...)
                         add_edge!(gdata.tg.g, rhsref, lhsref)
                     elseif rhs isa Number
                         #this is a constant
-                        rhsref = add_vertex!(gdata, gen_label(gdata, repr(rhs)))
+                        rhsref = add_vertex!(gdata, repr(rhs), "constant")
+                        add_val!(gdata, argref, arg)
                         add_edge!(gdata.tg.g, rhsref, lhsref)
                     else
                         @error "unhandled rhs $rhs"
@@ -132,7 +143,7 @@ function Cassette.prehook(ctx::TraceCtx, f, args...)
                 elseif line.head == :call
                     #create node for this ssavalue
                     lhs = Core.SSAValue(n)
-                    lhsref = add_vertex!(gdata, gen_label(gdata, repr(lhs)))
+                    lhsref = add_vertex!(gdata, repr(lhs), "SSAValue")
                     localnodes[lhs] = lhsref
                     #this is function call
                     #expose args and output and recurse will take care
@@ -141,7 +152,8 @@ function Cassette.prehook(ctx::TraceCtx, f, args...)
                         if arg isa Core.SlotNumber || arg isa Core.SSAValue
                             argref = localnodes[arg]
                         elseif arg isa Number
-                            argref = add_vertex!(gdata, gen_label(gdata, repr(arg)))
+                            argref = add_vertex!(gdata, repr(arg), "constant")
+                            add_val!(gdata, argref, arg)
                         else
                             @error "unhandled call arg $arg"
                         end
@@ -157,8 +169,8 @@ function Cassette.prehook(ctx::TraceCtx, f, args...)
                 end
                 enqueue!(q, arglist)
             end
+            push!(gdata.argrefs, q)
         end
-        push!(gdata.argrefs, q)
     end
 end
 function Cassette.overdub(ctx::TraceCtx, f, args...)
@@ -170,17 +182,20 @@ function Cassette.overdub(ctx::TraceCtx, f, args...)
     if name in norecurselist
         return Cassette.fallback(ctx, f, args...)
     end
-    try
-        return Cassette.recurse(ctx, f, args...)
-    finally
-        return Cassette.fallback(ctx, f, args...)
-    end
+    return Cassette.recurse(ctx, f, args...)
 end
 function Cassette.posthook(ctx::TraceCtx, output, f, args...)
     gdata = ctx.metadata
     if Cassette.canrecurse(ctx, f, args...) == true
-        pop!(gdata.argrefs)
+        method = first(methods(f, map(typeof, args)))
+        if !(string(method.name) in norecurselist)
+            pop!(gdata.argrefs)
+        end
     end
+    orgargs = dequeue!(top(gdata.argrefs))
+    @show f gdata.argrefs args
+    @assert length(orgargs) == length(args) + 1
+    add_val!(gdata, last(orgargs), output)
     pop!(gdata.prefix)
 end
 
@@ -189,21 +204,17 @@ end
 Creates an object of type TGraph
 """
 function tracegraph(f, args...)
-    #setup overdub for norecurselist
-    for func in norecurselist
-        @eval Cassette.overdub(ctx::TraceCtx, ::typeof($func), args...) = $func(args...)
-    end
     #prepare metadata for cassette
     tg = TGraph(DiGraph(), String[], String[], [])
-    gdata = GraphData(tg, Stack{Queue{Vector{Int64}}}(), String[], Dict{String, Int64}())
+    gdata = GraphData(tg, Stack{Queue{Vector{Int64}}}(), String[], Dict{String, Int64}(), Dict{Int64, Any}())
     #expose input nodes and output node for the function call
     #insert this list of node numbers in a queue in a stack
     noderefs = Int64[]
     for arg in args
-        noderef = add_vertex!(gdata, gen_label(gdata, "input"))
+        noderef = add_vertex!(gdata, "input", "input")
         push!(noderefs, noderef)
     end
-    noderef = add_vertex!(gdata, gen_label(gdata, "output"))
+    noderef = add_vertex!(gdata, "output", "output")
     push!(noderefs, noderef)
     q = Queue{Vector{Int64}}()
     enqueue!(q, noderefs)
@@ -211,7 +222,14 @@ function tracegraph(f, args...)
     #Call cassette
     ctx = TraceCtx(metadata = gdata)
     Cassette.prehook(ctx, f, args...)
-    Cassette.overdub(ctx, f, args...)
-    Cassette.posthook(ctx, f, args...)
+    out = Cassette.overdub(ctx, f, args...)
+    Cassette.posthook(ctx, out, f, args...)
+    for v in vertices(gdata.tg.g)
+        if haskey(gdata.valdict, v)
+            push!(gdata.tg.nodeval, gdata.valdict[v])
+        else
+            push!(gdata.tg.nodeval, nothing)
+        end
+    end
     gdata.tg
 end

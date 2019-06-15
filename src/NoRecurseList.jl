@@ -1,4 +1,4 @@
-norecurselist = ["+", "-", "/", "*"]
+norecurselist = ["+", "-", "*", "/"]
 
 function add_norecurse(f::String)
     global norecurselist
