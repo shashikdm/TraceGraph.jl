@@ -32,7 +32,7 @@ Then call `gplot` or `gplothtml` to plot the graph
 ```
 gplot(tg.g, nodelabel = tg.nodelabel)
 #OR
-gplothtml(tg.g, nodelabel = tracegraph.label)
+gplothtml(tg.g, nodelabel = tg.nodelabel)
 ```
 The resulting plot will look something like :  
 ![foobargraph](https://raw.githubusercontent.com/shashikdm/TraceGraph.jl/ccfc4fea9651d203cd520efa67e7378cddc1e46b/footrace.png)
