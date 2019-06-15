@@ -26,5 +26,6 @@ include("NoRecurseList.jl")
 include("GenerateGraph.jl")
 
 export TGraph, tracegraph
+export add_norecurse, rm_norecurse, show_norecurse
 
 end # module
