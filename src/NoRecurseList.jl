@@ -11,7 +11,7 @@ add_norecurse(f::Method) = add_norecurse(string(f.name))
 
 function add_norecurse(f::Function)
     if !isa(f, Core.Builtin)
-        add_norecurse(string(first(methods(f)).name))
+        add_norecurse(first(methods(f)))
     end
 end
 
@@ -27,7 +27,7 @@ rm_norecurse(f::Method) = rm_norecurse(string(f.name))
 
 function rm_norecurse(f::Function)
     if !isa(f, Core.Builtin)
-        rm_norecurse(string(first(methods(f)).name))
+        rm_norecurse(first(methods(f)))
     end
 end
 
