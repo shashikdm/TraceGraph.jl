@@ -1,161 +1,257 @@
-####### Cassette pass #######
-mutable struct Trace
-    current::Vector{Any}
-    stack::Vector{Any}
-    Trace() = new(Any[], Any[])
+Cassette.@context TraceCtx
+
+######Approach:#######
+#make nodes by tracing IR of each function call
+#expose arguments and return nodes for function such that,
+# when they are called, they can be easily connected (argrefs)
+# for each arg, constant, function and return save value in dictionary and later fill tg.nodevals
+
+mutable struct GraphData #will go into ctx metadata
+    tg::TGraph #will return this object
+    #stack of queue of arglists
+    #because nodes at each depth of recursion are created in a stack manner
+    # and nodes within a function call are created in a queue manner
+    argrefs::Stack{Queue{Vector{Int64}}}
+    #important for hierarchy and subgraph
+    prefix::Vector{String}
+    #important for tb to differenriate nodes
+    uniquenames::Dict{String, Int64}
+    valdict::Dict{Int64, Any}
 end
 
-function enter!(t::Trace, args...)
-    pair = args => Any[]
-    push!(t.current, pair)
-    push!(t.stack, t.current)
-    t.current = pair.second
-    return nothing
-end
-
-function exit!(t::Trace)
-    t.current = pop!(t.stack)
-    return nothing
-end
-
-###### Library ######
-
-function custom_repr(x)
-    s = repr(x)
-    if occursin("getfield(", s)
-        s = String(match(r"\".*?\"", s).match)
-    end
-    return s
-end
-
-
-"""
-    struct TNode
-Object corresponding to every vertex in graph
-fields:
-- name::String  : Unique name for each node
-- op::String    : Name of the function/operation
-- val::Any      : Content of the node (if any)
-"""
-
-struct TNode
-    name::String
-    op::String
-    val::Any
-end
-
-function insertnode!(nodelist::Vector{TNode}, localnodelist::Vector{TNode}, uniquenames::Dict{String, Int64}, prefix::String, name::String, op::String, val::Any)
-    completename = prefix*name
-    if haskey(uniquenames, completename)
-        uniquenames[completename] += 1
-        push!(nodelist, TNode(completename*"_"*repr(uniquenames[completename]), op, val))
-        push!(localnodelist, TNode(completename*"_"*repr(uniquenames[completename]), op, val))
+function gen_label(gdata::GraphData, name::String)
+    candidatename = name
+    if haskey(gdata.uniquenames, candidatename)
+        gdata.uniquenames[candidatename] += 1
+        uniquename = candidatename*"_"*string(gdata.uniquenames[candidatename])
     else
-        uniquenames[completename] = 0
-        push!(nodelist, TNode(completename, op, val))
-        push!(localnodelist, TNode(completename, op, val))
+        gdata.uniquenames[candidatename] = 0
+        uniquename = candidatename
     end
+    gen_prefix(gdata)*uniquename
 end
 
-function getnoderef(nodelist::Vector{TNode}, localnodelist::Vector{TNode}, val::Any)
-    for lnode in localnodelist
-        if lnode.val === val
-            for (n, node) in enumerate(reverse(nodelist))
-                if node.val === val
-                    return size(nodelist, 1)+1-n
-                end
+function add_vertex!(gdata::GraphData, name::String, op::String)
+    name = gen_label(gdata, name)
+    push!(gdata.tg.nodelabel, name)
+    push!(gdata.tg.nodeop, op)
+    add_vertex!(gdata.tg.g)
+    nv(gdata.tg.g)
+end
+
+function add_prefix!(gdata::GraphData, newprefix::String)
+    candidatename = newprefix
+    if haskey(gdata.uniquenames, candidatename)
+        gdata.uniquenames[candidatename] += 1
+        uniquename = candidatename*"_"*string(gdata.uniquenames[candidatename])
+    else
+        gdata.uniquenames[candidatename] = 0
+        uniquename = candidatename
+    end
+    push!(gdata.prefix, uniquename)
+end
+
+rm_prefix!(gdata::GraphData) = pop!(gdata.prefix)
+
+function gen_prefix(gdata::GraphData)
+    if isempty(gdata.prefix)
+        prefix = ""
+    else
+        prefix = join(gdata.prefix, "/")*"/"
+    end
+    prefix
+end
+
+add_val!(gdata::GraphData, node::Int64, val::Any) = gdata.valdict[node] = val
+
+slotname(ir::Core.CodeInfo, slotnum::Integer) = string(ir.slotnames[slotnum])
+slotname(ir::Core.CodeInfo, slotnum) = slotname(ir, slotnum.id)
+
+function Cassette.prehook(ctx::TraceCtx, f, args...)
+    #get the IR of this function call
+    ir = InteractiveUtils.@code_lowered f(args...)
+    gdata = ctx.metadata
+    #obtain the exposed argument nodes for this function all (exposed in previous recursion depth)
+    orgargs = front(top(gdata.argrefs))
+    @assert length(orgargs) == length(args)+1 "args length mismatch"
+    if Cassette.canrecurse(ctx, f, args...) == false
+        #can't recurse then create nodes just for result and args
+        add_prefix!(gdata, repr(f))
+        resultref = add_vertex!(gdata, repr(f), "function")
+        for (n, arg) in enumerate(args)
+            #create node for each argument
+            argref = add_vertex!(gdata, repr(arg), "arg")
+            #connect the exposed arg to this arg
+            add_edge!(gdata.tg.g, orgargs[n], argref)
+            #connect this arg to result
+            add_edge!(gdata.tg.g, argref, resultref)
+            add_val!(gdata, orgargs[n], arg)
+            add_val!(gdata, argref, arg)
+        end
+        #connect exposed output with this result
+        add_edge!(gdata.tg.g, resultref, last(orgargs))
+        add_val!(gdata, resultref, f)
+    else
+        method = first(methods(f, map(typeof, args)))
+        argnames = Base.method_argnames(method)[2:end]
+        @assert length(orgargs) == length(argnames)+1 "argnames length mismatch"
+        name = string(method.name)
+        add_prefix!(gdata, name)
+        #reference of localnodes for this function call
+        localnodes = Dict{Any, Int64}()
+        for (n, arg) in enumerate(argnames)
+            #create a node for each argument
+            argref =  add_vertex!(gdata, string(arg), "arg")
+            localnodes[Core.SlotNumber(findfirst(isequal(arg), ir.slotnames))] = argref
+            #also connect these arguments to the parent function
+            add_edge!(gdata.tg.g, orgargs[n], argref)
+            add_val!(gdata, orgargs[n], args[n])
+            add_val!(gdata, argref, args[n])
+        end
+
+        if name in norecurselist
+            #if this is to be ignored, then just make one node for result
+            resultref = add_vertex!(gdata, string(name), "function")
+            for v in values(localnodes)
+                add_edge!(gdata.tg.g, v, resultref)
             end
+            add_edge!(gdata.tg.g, resultref, last(orgargs))
+            add_val!(gdata, resultref, f)
+        else
+            #build subgraph
+            q = Queue{Vector{Int64}}()
+            for (n, line) in enumerate(ir.code)
+                arglist = Vector{Int64}()
+                if line.head == :(=) #assignment
+                    #create node for lhs
+                    lhs = first(line.args)
+                    lhsref = add_vertex!(gdata, slotname(ir, lhs), "variable")
+                    localnodes[lhs] = lhsref
+                    rhs = last(line.args)
+                    if rhs isa Expr
+                        if rhs.head == :call
+                            #this is a function call
+                            #expose args and recurse will take care
+                            args = rhs.args[2:end]
+                            for arg in args
+                                if arg isa Core.SlotNumber || arg isa Core.SSAValue
+                                    #so it already exists in localnodes
+                                    argref = localnodes[arg]
+                                    push!(arglist, argref)
+                                elseif arg isa Number
+                                    #create new node for this
+                                    argref = add_vertex!(gdata, repr(arg), "constant")
+                                    add_val!(gdata, argref, arg)
+                                    push!(arglist, argref)
+                                else
+                                    @error "unhandled rhs arg $arg"
+                                end
+                            end
+                            push!(arglist, lhsref)
+                        else
+                            #some arent handled yet, invoke, goto etc
+                            @error "unhandled rhs head $rhs"
+                        end
+                    elseif rhs isa Core.SlotNumber || rhs isa Core.SSAValue
+                        rhsref = localnodes[rhs]
+                        add_edge!(gdata.tg.g, rhsref, lhsref)
+                    elseif rhs isa Number
+                        #this is a constant
+                        rhsref = add_vertex!(gdata, repr(rhs), "constant")
+                        add_val!(gdata, argref, arg)
+                        add_edge!(gdata.tg.g, rhsref, lhsref)
+                    else
+                        @error "unhandled rhs $rhs"
+                    end
+                elseif line.head == :call
+                    #create node for this ssavalue
+                    lhs = Core.SSAValue(n)
+                    lhsref = add_vertex!(gdata, repr(lhs), "SSAValue")
+                    localnodes[lhs] = lhsref
+                    #this is function call
+                    #expose args and output and recurse will take care
+                    args = line.args[2:end]
+                    for arg in args
+                        if arg isa Core.SlotNumber || arg isa Core.SSAValue
+                            argref = localnodes[arg]
+                        elseif arg isa Number
+                            argref = add_vertex!(gdata, repr(arg), "constant")
+                            add_val!(gdata, argref, arg)
+                        else
+                            @error "unhandled call arg $arg"
+                        end
+                        push!(arglist, argref)
+                    end
+                    push!(arglist, lhsref)
+                elseif line.head == :return
+                    lhsref = last(orgargs)
+                    rhsref = localnodes[first(line.args)]
+                    add_edge!(gdata.tg.g, rhsref, lhsref)
+                else
+                    @error "unhandled line $(line.head)"
+                end
+                enqueue!(q, arglist)
+            end
+            push!(gdata.argrefs, q)
         end
     end
-    return nothing
 end
-
-function getnodelabels(nodelist::Vector{TNode})
-    names = Array{String, 1}()
-    for node in nodelist
-        push!(names, node.name)
+function Cassette.overdub(ctx::TraceCtx, f, args...)
+    if Cassette.canrecurse(ctx, f, args...) == false
+        return Cassette.fallback(ctx, f, args...)
     end
-    return names
+    method = first(methods(f, map(typeof, args)))
+    name = string(method.name)
+    if name in norecurselist
+        return Cassette.fallback(ctx, f, args...)
+    end
+    return Cassette.recurse(ctx, f, args...)
+end
+function Cassette.posthook(ctx::TraceCtx, output, f, args...)
+    gdata = ctx.metadata
+    if Cassette.canrecurse(ctx, f, args...) == true
+        method = first(methods(f, map(typeof, args)))
+        if !(string(method.name) in norecurselist)
+            pop!(gdata.argrefs)
+        end
+    end
+    orgargs = dequeue!(top(gdata.argrefs))
+    @assert length(orgargs) == length(args) + 1
+    add_val!(gdata, last(orgargs), output)
+    pop!(gdata.prefix)
 end
 
-ignorelist = [+, -, *, /]
 """
-    struct TGraph
-Object that represents the traced graph of the function call.
-fields:
-- graph::SimpleDiGraph  : Object of type SimpleDiGraph
-- names::Vector{String} : List of names corresponding to the nodes
-"""
-
-struct TGraph
-    graph::SimpleDiGraph
-    nodelist::Vector{TNode}
-    labels::Vector{String}
-end
-
-"""
-    generategraph(f::Function, args...)
+    tracegraph(f::Function, args...)
 Creates an object of type TGraph
 """
-
-Cassette.@context TraceCtx
-Cassette.prehook(ctx::TraceCtx, args...) = enter!(ctx.metadata, args...)
-Cassette.posthook(ctx::TraceCtx, args...) = exit!(ctx.metadata)
-
-function generategraph(f, args...)
-    G = DiGraph()
-    trace = Trace()
-    Cassette.overdub(TraceCtx(metadata = trace), f, args...)
-    nodelist = Vector{TNode}()
-    uniquenames = Dict{String, Int64}()
-    prefix = ""
-    function buildgraph(trace::Array{Any, 1}, lnodelist::Vector{TNode})
-        for t in trace
-            line = t.first
-            call = line[1]
-            args = line[2:end]
-            result = call(args...)
-            if isempty(t.second) || call in ignorelist #no subgraph
-                insertnode!(nodelist, lnodelist, uniquenames, prefix, custom_repr(call), custom_repr(call), result)
-                add_vertex!(G)
-                resultref = nv(G)
-                for arg in args
-                    noderef = getnoderef(nodelist, lnodelist, arg)
-                    if noderef == nothing #new node
-                        insertnode!(nodelist, lnodelist, uniquenames, prefix, custom_repr(arg), custom_repr(arg), arg)
-                        add_vertex!(G)
-                        noderef = nv(G)
-                    end
-                    add_edge!(G, noderef, resultref) #connect result and arg
-                end
-            else #subgraph
-
-                #Step 1 create arg nodes and a result node
-
-                newlocalnodelist = Vector{TNode}()
-                for arg in args
-                    #for each arg make node in both caller and callee
-                    noderef1 = getnoderef(nodelist, lnodelist, arg)
-                    if noderef1 == nothing #new node
-                        insertnode!(nodelist, lnodelist, uniquenames, prefix, custom_repr(arg), custom_repr(arg), arg)
-                        add_vertex!(G)
-                        noderef1 = nv(G)
-                    end
-                    #now make arg node in that function
-                    insertnode!(nodelist, newlocalnodelist, uniquenames, prefix*custom_repr(call)*"/", custom_repr(arg), custom_repr(arg), arg)
-                    add_vertex!(G)
-                    noderef2 = nv(G)
-                    add_edge!(G, noderef1, noderef2) #connect result and arg
-                end
-                #Then build subgraph
-                oldprefix = prefix
-                prefix = prefix*custom_repr(call)*"/"
-                buildgraph(t.second, newlocalnodelist)
-                #Then add the last node in subgraph to local nodelist
-                push!(lnodelist, last(newlocalnodelist))
-            end
+function tracegraph(f, args...)
+    #prepare metadata for cassette
+    tg = TGraph(DiGraph(), String[], String[], [])
+    gdata = GraphData(tg, Stack{Queue{Vector{Int64}}}(), String[], Dict{String, Int64}(), Dict{Int64, Any}())
+    #expose input nodes and output node for the function call
+    #insert this list of node numbers in a queue in a stack
+    noderefs = Int64[]
+    for arg in args
+        noderef = add_vertex!(gdata, "input", "input")
+        push!(noderefs, noderef)
+    end
+    noderef = add_vertex!(gdata, "output", "output")
+    push!(noderefs, noderef)
+    q = Queue{Vector{Int64}}()
+    enqueue!(q, noderefs)
+    push!(gdata.argrefs, q)
+    #Call cassette
+    ctx = TraceCtx(metadata = gdata)
+    Cassette.prehook(ctx, f, args...)
+    out = Cassette.overdub(ctx, f, args...)
+    Cassette.posthook(ctx, out, f, args...)
+    for v in vertices(gdata.tg.g)
+        if haskey(gdata.valdict, v)
+            push!(gdata.tg.nodevalue, gdata.valdict[v])
+        else
+            push!(gdata.tg.nodevalue, nothing)
         end
     end
-    buildgraph(trace.current, Vector{TNode}())
-    TGraph(G, nodelist, getnodelabels(nodelist))
+    gdata.tg
 end

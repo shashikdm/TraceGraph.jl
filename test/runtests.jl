@@ -1,22 +1,31 @@
 using Test
 using TraceGraph
-using TraceGraph:generategraph
+using TraceGraph:tracegraph
 using GraphPlot
-using Flux
 using LightGraphs
 
 @testset "Basic Tests" begin
-    tg = generategraph(+, 1, 2)
-    @test nv(tg.graph) == 3
-    function foo(x)
-        x = x+1
+    function foo(a)
+            b = a+10
+            c = b+10
+            return (a,b,c)
     end
-
-    function bar(y)
-        y = foo(y-1)
+    gd = tracegraph(foo, 100)
+    gplothtml(gd.g, nodelabel = gd.nodelabel)
+    add_norecurse(reshape)
+    show_norecurse()
+    rm_norecurse(reshape)
+end
+@testset "Conditional Statement" begin
+    function foo(a::Bool)
+        if a == true
+            return 100+100
+        else
+            return 100-100
+        end
     end
-
-    tg = generategraph(bar, 10)
-    @test nv(tg.graph) == 9
-    tg = generategraph(Dense(2,2), rand(2))
+    gd = tracegraph(foo, false)
+    gplothtml(gd.g, nodelabel = gd.nodelabel)
+    gd = tracegraph(foo, true)
+    gplothtml(gd.g, nodelabel = gd.nodelabel)
 end
