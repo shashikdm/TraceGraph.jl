@@ -11,8 +11,6 @@ using LightGraphs
             return (a,b,c)
     end
     gd = tracegraph(foo, 100)
-<<<<<<< HEAD
-    gplothtml(gd.g, nodelabel = gd.nodelabel)
     add_norecurse(reshape)
     show_norecurse()
     rm_norecurse(reshape)
@@ -26,12 +24,5 @@ end
         end
     end
     gd = tracegraph(foo, false)
-    gplothtml(gd.g, nodelabel = gd.nodelabel)
     gd = tracegraph(foo, true)
-    gplothtml(gd.g, nodelabel = gd.nodelabel)
-=======
-    add_norecurse(reshape)
-    show_norecurse()
-    rm_norecurse(reshape)
->>>>>>> e1660ce6aa97c70bc63897ca2cd82012956c3cc7
 end
